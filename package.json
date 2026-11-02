@@ -1,0 +1,53 @@
+{
+  "name": "dsh-result-check",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness plugin: before a turn ends, checks the answer against the session's tool output (unreported tool failures, numbers with no source) and sends the model back once.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "agent",
+    "verification",
+    "hallucination"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KrimsonSun/dsh-result-check.git"
+  },
+  "homepage": "https://github.com/KrimsonSun/dsh-result-check#readme",
+  "engines": {
+    "dsh": ">=0.2.0 <0.3.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --outfile=lib/index.js",
+    "prepare": "npm run build",
+    "test": "vitest run tests/unit",
+    "test:dsh": "bash scripts/test-in-dsh.sh"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "vitest": "^4.1.11"
+  }
+}

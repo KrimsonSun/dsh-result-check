@@ -1,0 +1,6 @@
+# Layer applied when a profile lists this bundle. To change settings, override
+# this row by id in your profile's own cordis.patch.yml (restate every key you
+# want; a later layer replaces the whole `config`).
+- insert:
+    - id: result-check
+      name: dsh-result-check
