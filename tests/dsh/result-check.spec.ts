@@ -125,6 +125,54 @@ describe('unreported tool failures', () => {
     const { agent } = await run(ctx, [toolCallResponse('c1', 'fetch', {}), textResponse('Done.')])
     expect(notes(agent)).toEqual([])
   })
+
+  it('by default, treats a later successful call of another tool as moving on', async () => {
+    const ctx = await harness()
+    const { agent } = await run(ctx, [
+      toolCallResponse('c1', 'fetch', {}),
+      toolCallResponse('c2', 'stats', {}),
+      textResponse('AUC 0.873 over 1708 cells.'),
+    ])
+    expect(notes(agent)).toEqual([])
+  })
+
+  it('with failureResolvedBy same-tool, still flags that failure', async () => {
+    const ctx = await harness({ failureResolvedBy: 'same-tool' })
+    const { agent } = await run(ctx, [
+      toolCallResponse('c1', 'fetch', {}),
+      toolCallResponse('c2', 'stats', {}),
+      textResponse('AUC 0.873 over 1708 cells.'),
+      textResponse('The fetch failed; the AUC comes from the stats tool.'),
+    ])
+    expect(notes(agent).map(n => n.summary)).toEqual(['Result check: 1 unreported tool failure'])
+  })
+
+  it('skips calls dsh rejected before running them (unknown tool, invalid arguments)', async () => {
+    const ctx = await harness()
+    ctx.tools.register(defineContentToolFixture({
+      name: 'lookup', description: 'needs a string', parameters: { gene: { type: 'string' } },
+      async execute() { return [{ type: 'text', text: 'ok' }] },
+    }))
+    const { agent, adapter } = await run(ctx, [
+      toolCallResponse('c1', 'no_such_tool', {}),
+      toolCallResponse('c2', 'lookup', { gene: 41 }),
+      textResponse('Done.'),
+    ])
+    const results = agent.session.snapshotEvents().filter(e => e.type === 'tool/result')
+    expect(results.map(e => (e as SessionEvent<'tool/result'>).data.error?.code)).toEqual(['UNKNOWN_TOOL', 'INVALID_ARGS'])
+    expect(notes(agent)).toEqual([])
+    expect(adapter.requests).toHaveLength(3)
+  })
+
+  it('flags those calls too when ignoreErrorCodes is emptied', async () => {
+    const ctx = await harness({ ignoreErrorCodes: [] })
+    const { agent } = await run(ctx, [
+      toolCallResponse('c1', 'no_such_tool', {}),
+      textResponse('Done.'),
+      textResponse('That tool does not exist, so nothing was done.'),
+    ])
+    expect(notes(agent).map(n => n.summary)).toEqual(['Result check: 1 unreported tool failure'])
+  })
 })
 
 describe('unsourced numbers', () => {
@@ -146,6 +194,15 @@ describe('unsourced numbers', () => {
     const { agent } = await run(ctx, [
       toolCallResponse('c1', 'stats', {}),
       textResponse('AUC 0.873 over 1708 cells; 12.5% failed QC.'),
+    ])
+    expect(notes(agent)).toEqual([])
+  })
+
+  it('accepts a number one step of arithmetic gives from sourced numbers', async () => {
+    const ctx = await harness()
+    const { agent } = await run(ctx, [
+      toolCallResponse('c1', 'stats', {}),
+      textResponse('1708 cells in 2 equal batches, so 854 per batch.'),
     ])
     expect(notes(agent)).toEqual([])
   })
@@ -203,5 +260,11 @@ describe('limits and config', () => {
     const ctx = new Context()
     await mountAgentLoopTestDependencies(ctx)
     await expect(ctx.plugin(ResultCheck, { maxNudgesPerTurn: 0 })).rejects.toThrow(/maxNudgesPerTurn/)
+  })
+
+  it('rejects an unknown failureResolvedBy at load', async () => {
+    const ctx = new Context()
+    await mountAgentLoopTestDependencies(ctx)
+    await expect(ctx.plugin(ResultCheck, { failureResolvedBy: 'never' as never })).rejects.toThrow()
   })
 })

@@ -38,6 +38,25 @@ describe('extractClaims: what counts as a stated value', () => {
     expect(raws('on an H100 with x86_64, see Section 3.2, step 12, port 8800, PR 150')).toEqual([])
   })
 
+  it('skips line references, phone numbers and named standards (seen in real answers)', () => {
+    expect(raws([
+      'See scrna_pack.py:562-566 and research_lab.py:4985-5172, app:2655-2661 and (js:3656-3663, 4971-4975).',
+      'It skips shared folders (891-894) and `_push_staged` (2867) and `pushToSession` (4949, 4995-5003).',
+      'Routes are at lines 9319–9338, called at 2623; close codes 4400–4499 stop reconnecting.',
+      'Call +1 650-555-0142. ISBN 92-4-154542-9. Timestamps are ISO-8601; the lab needs ISO 15189.',
+      'The link will return HTTP 404 and the job exits with code 137.',
+    ].join('\n'))).toEqual([])
+  })
+
+  it('still reads values next to these patterns', () => {
+    expect(raws('AC (469 cells) vs WT 181; log2FC -1.25 in 1,708 cells')).toEqual(['469', '181', '-1.25', '1,708'])
+  })
+
+  it('records a convertible unit', () => {
+    expect(extractClaims('Sizes: 15.6 GB, 1530ms, 2.7 hours, 1.63M tokens, 42.7万句').map(c => c.unit))
+      .toEqual(['GB', 'ms', 'hours', 'M', '万'])
+  })
+
   it('skips hedged and bounded numbers', () => {
     expect(raws('about 1708 cells, ~0.87, p < 0.05, at least 250 reads, 约1500个, 300左右')).toEqual([])
   })
@@ -85,6 +104,52 @@ describe('NumberIndex and isSourced: matching at the written precision', () => {
     const tool = '{"skipped_groups": [{"group": "Endothelial", "n_condition": 7, "n_reference": 27}], "AC": {"DDX41": 392, "WT": 258}}'
     const answer = '| Cell type | WT cells | DDX41 cells |\n|---|---|---|\n| AC | 469 | 181 |'
     expect(unsourcedClaims(answer, indexOf(tool)).map(c => c.raw)).toEqual(['469', '181'])
+  })
+
+  it('accepts a change of unit (sizes, scale words, time)', () => {
+    expect(unsourcedClaims('the report is 13.9 KB', indexOf('-rw-r--r-- 1 u g 13917 report.md'))).toEqual([])
+    expect(unsourcedClaims('the archive is 125 MB', indexOf('124763103 bytes'))).toEqual([])
+    expect(unsourcedClaims('the BAM is 15.6 GiB', indexOf('size=16750372454'))).toEqual([])
+    expect(unsourcedClaims('KV pool of 1.63M tokens', indexOf('kv_tokens: 1630412'))).toEqual([])
+    expect(unsourcedClaims('语料共 42.7 万句', indexOf('sentences=427113'))).toEqual([])
+    expect(unsourcedClaims('the upload needs 2.7 hours', indexOf('eta_s: 9731'))).toEqual([])
+  })
+
+  it('does not convert a number without a unit', () => {
+    expect(unsourcedClaims('469 cells', indexOf('469000 reads')).map(c => c.raw)).toEqual(['469'])
+  })
+
+  it('accepts one arithmetic step on the answer\'s other numbers', () => {
+    expect(unsourcedClaims('One node has 4×96 = 384GB, too little.', new NumberIndex())).toEqual([])
+    expect(unsourcedClaims('282.33 vs 89.8 tok/s is a 3.14× speedup', indexOf('282.33 89.8'))).toEqual([])
+    expect(unsourcedClaims('594.28 of 600 TiB used, so 5.72 TiB left', indexOf('594.28/600.00 TiB'))).toEqual([])
+  })
+
+  it('takes operands from inline code and lets the step change unit', () => {
+    expect(unsourcedClaims('Quota is `590.11 TiB / 600 TiB`, so 9.9 TiB is left.', new NumberIndex())).toEqual([])
+    expect(unsourcedClaims('8 runs × 605 s each = 80.7 min of waiting.', indexOf('preflight_s=605'))).toEqual([])
+  })
+
+  it('chains steps: a derived number can derive the next', () => {
+    // 600 - 594.28 = 5.72; 5.72 / 2 = 2.86
+    expect(unsourcedClaims('600 TiB, 594.28 used, 5.72 left, 2.86 per lab for 2 labs', indexOf('594.28'))).toEqual([])
+  })
+
+  it('does not let made-up numbers vouch for each other', () => {
+    const tool = '{"AC": {"DDX41": 392, "WT": 258}}'
+    const answer = '| AC | WT 469 | DDX41 181 | total 650 |'
+    expect(unsourcedClaims(answer, indexOf(tool)).map(c => c.raw)).toEqual(['469', '181', '650'])
+  })
+
+  it('takes operands from the claim\'s paragraph unless told to use the whole answer', () => {
+    const answer = 'Node: 4 cards of 96 GB.\n\nSo one node holds 384 GB.'
+    expect(unsourcedClaims(answer, new NumberIndex()).map(c => c.raw)).toEqual(['384'])
+    expect(unsourcedClaims(answer, new NumberIndex(), { derivedScope: 'answer' })).toEqual([])
+    expect(unsourcedClaims('| GPU | 4 | 96 GB |\n| total | | 384 GB |', new NumberIndex())).toEqual([])
+  })
+
+  it('can turn derivation off', () => {
+    expect(unsourcedClaims('4×96 = 384GB', new NumberIndex(), { allowDerived: false }).map(c => c.raw)).toEqual(['384'])
   })
 
   it('is empty-safe', () => {

@@ -36,12 +36,19 @@ describe('readOutcome', () => {
 describe('unresolvedFailures', () => {
   const o = (callId: string, name: string, failed: boolean): ToolOutcome => ({ callId, name, failed })
 
-  it('keeps a failure with no later success of the same tool', () => {
-    expect(unresolvedFailures([o('1', 'fetch', true), o('2', 'read', false)]).map(f => f.callId)).toEqual(['1'])
+  it('keeps a failure nothing after it made up for', () => {
+    expect(unresolvedFailures([o('1', 'read', false), o('2', 'fetch', true)]).map(f => f.callId)).toEqual(['2'])
+    expect(unresolvedFailures([o('1', 'fetch', true), o('2', 'fetch', true)]).map(f => f.callId)).toEqual(['1', '2'])
   })
 
-  it('drops a failure retried successfully later', () => {
+  it('by default, drops a failure once any later call succeeds (the agent moved on)', () => {
     expect(unresolvedFailures([o('1', 'fetch', true), o('2', 'fetch', false)])).toEqual([])
+    expect(unresolvedFailures([o('1', 'fetch', true), o('2', 'read', false)])).toEqual([])
+  })
+
+  it('with same-tool, only a later success of that tool counts', () => {
+    expect(unresolvedFailures([o('1', 'fetch', true), o('2', 'read', false)], 'same-tool').map(f => f.callId)).toEqual(['1'])
+    expect(unresolvedFailures([o('1', 'fetch', true), o('2', 'fetch', false)], 'same-tool')).toEqual([])
   })
 
   it('does not count a success before the failure', () => {

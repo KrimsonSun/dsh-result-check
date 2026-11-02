@@ -7,11 +7,12 @@
  * biomedical data), where prompt instructions alone did not stop these errors
  * and code checks did:
  *
- * 1. Unreported tool failures — a tool call failed, was not retried
- *    successfully, and the answer does not say anything failed.
+ * 1. Unreported tool failures — a tool call failed, no later call made up for
+ *    it, and the answer does not say anything failed.
  * 2. Unsourced numbers — the answer states a number that no tool output, tool
- *    argument or user message of the session contains, at the precision the
- *    answer writes it.
+ *    argument or user message of the session contains at the precision the
+ *    answer writes it (allowing unit changes and one arithmetic step on other
+ *    numbers in the answer).
  *
  * No model call is made. The plugin steers at `agent/turn-stopping` (at most
  * `maxNudgesPerTurn` times per turn), so the model gets one more step to retry,
@@ -25,8 +26,16 @@ import type {} from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { acknowledgesFailure, DEFAULT_FAILURE_STATUSES, readOutcome, unresolvedFailures, type ToolOutcome } from './failures.ts'
-import { NumberIndex, unsourcedClaims, type NumberClaim } from './numbers.ts'
+import {
+  acknowledgesFailure,
+  DEFAULT_FAILURE_STATUSES,
+  DEFAULT_IGNORED_ERROR_CODES,
+  readOutcome,
+  unresolvedFailures,
+  type FailureResolution,
+  type ToolOutcome,
+} from './failures.ts'
+import { NumberIndex, unsourcedClaims, type DerivedScope, type NumberClaim } from './numbers.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -35,9 +44,9 @@ declare module '@deepseek-ai/dsh-llm' {
 }
 
 export { acknowledgesFailure, readOutcome, unresolvedFailures } from './failures.ts'
-export type { ToolOutcome } from './failures.ts'
+export type { FailureResolution, ToolOutcome } from './failures.ts'
 export { extractClaims, NumberIndex, unsourcedClaims } from './numbers.ts'
-export type { NumberClaim } from './numbers.ts'
+export type { DerivedScope, NumberClaim } from './numbers.ts'
 
 export const name = 'result-check'
 
@@ -54,6 +63,14 @@ export interface Config {
   failureStatuses?: string[]
   /** Tool names (`*` wildcards) whose failures are ignored, e.g. exploratory reads. */
   ignoreTools?: string[]
+  /** dsh error codes (`*` wildcards) that are not failed results: cancelled, unknown tool, invalid arguments, declined. */
+  ignoreErrorCodes?: string[]
+  /** A failure is dealt with once a later call succeeds: of any tool (default), or only of the same tool. */
+  failureResolvedBy?: FailureResolution
+  /** Accept a number that one arithmetic step on two other numbers in the answer gives (default true). */
+  allowDerived?: boolean
+  /** Where those two numbers may come from: the same paragraph (default) or the whole answer (quieter, misses more). */
+  derivedScope?: DerivedScope
   /** Skip agents running as subagents (default false: they are checked too). */
   skipSubagents?: boolean
   /** Most times one turn is sent back (default 1). */
@@ -69,6 +86,10 @@ export const Config: z<Config> = z.object({
   minIntegerDigits: z.number().default(3),
   failureStatuses: z.array(z.string()).default([...DEFAULT_FAILURE_STATUSES]),
   ignoreTools: z.array(z.string()).default([]),
+  ignoreErrorCodes: z.array(z.string()).default([...DEFAULT_IGNORED_ERROR_CODES]),
+  failureResolvedBy: z.union(['any-tool', 'same-tool'] as const).default('any-tool'),
+  allowDerived: z.boolean().default(true),
+  derivedScope: z.union(['paragraph', 'answer'] as const).default('paragraph'),
   skipSubagents: z.boolean().default(false),
   maxNudgesPerTurn: z.number().default(1),
   maxListedNumbers: z.number().default(8),
@@ -120,7 +141,7 @@ export function renderFindings(findings: Findings, maxListed: number): string {
   if (findings.failures.length > 0) {
     const lines = findings.failures.map(f => `- \`${f.name}\` (call ${f.callId})${f.reason ? `: ${f.reason}` : ''}`)
     parts.push(
-      'These tool calls failed and were not retried successfully, and your answer does not mention it:\n'
+      'These tool calls failed, no later call made up for them, and your answer does not mention it:\n'
       + `${lines.join('\n')}\n`
       + 'Retry them, or tell the user plainly what failed and how that limits your answer.',
     )
@@ -158,6 +179,16 @@ export function apply(ctx: Context, config: Config): void {
   const maxListed = positiveInteger(config.maxListedNumbers ?? 8, 'maxListedNumbers')
   const statuses = config.failureStatuses ?? [...DEFAULT_FAILURE_STATUSES]
   const ignored = (config.ignoreTools ?? []).map(wildcard)
+  const ignoredCodes = (config.ignoreErrorCodes ?? [...DEFAULT_IGNORED_ERROR_CODES]).map(wildcard)
+  const resolvedBy: FailureResolution = config.failureResolvedBy ?? 'any-tool'
+  if (resolvedBy !== 'any-tool' && resolvedBy !== 'same-tool') {
+    throw new Error(`result-check: \`failureResolvedBy\` must be 'any-tool' or 'same-tool', got ${String(resolvedBy)}`)
+  }
+  const allowDerived = config.allowDerived !== false
+  const derivedScope: DerivedScope = config.derivedScope ?? 'paragraph'
+  if (derivedScope !== 'paragraph' && derivedScope !== 'answer') {
+    throw new Error(`result-check: \`derivedScope\` must be 'paragraph' or 'answer', got ${String(derivedScope)}`)
+  }
   const skipSubagents = config.skipSubagents === true
 
   const states = new WeakMap<Session, SessionState>()
@@ -214,6 +245,8 @@ export function apply(ctx: Context, config: Config): void {
         state.sources.add(text)
         const name = state.callNames.get(message.toolCallId) ?? 'unknown tool'
         if (ignored.some(p => p.test(name))) return
+        // A call that never ran properly neither fails nor resolves anything.
+        if (message.isError && error?.code !== undefined && ignoredCodes.some(p => p.test(error.code))) return
         const outcome = readOutcome(message.isError, text, error?.reason, statuses)
         state.outcomes.push({ callId: message.toolCallId, name, ...outcome })
         return
@@ -237,11 +270,11 @@ export function apply(ctx: Context, config: Config): void {
 
     const findings: Findings = { failures: [], numbers: [] }
     if (checkFailures) {
-      const unresolved = unresolvedFailures(state.outcomes)
+      const unresolved = unresolvedFailures(state.outcomes, resolvedBy)
       if (unresolved.length > 0 && !acknowledgesFailure(answer)) findings.failures = unresolved
     }
     if (checkNumbers && state.complete && (state.toolCalls > 0 || !numbersNeedToolCall)) {
-      findings.numbers = unsourcedClaims(answer, state.sources, { minIntegerDigits })
+      findings.numbers = unsourcedClaims(answer, state.sources, { minIntegerDigits, allowDerived, derivedScope })
     }
     if (findings.failures.length === 0 && findings.numbers.length === 0) return
 

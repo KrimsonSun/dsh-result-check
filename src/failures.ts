@@ -1,6 +1,6 @@
 /**
- * Tool calls that failed in a turn, were never retried successfully, and that
- * the final answer does not mention.
+ * Tool calls that failed in a turn, that the turn never got past (no later
+ * call succeeded), and that the final answer does not mention.
  *
  * Ported from AiScientist, where a step whose tool failed or returned nothing
  * could not be accepted: "a tool failure is reported as a failure, never
@@ -74,16 +74,41 @@ export function readOutcome(
   return { failed: true, reason: status }
 }
 
-/** Failed calls with no later successful call to the same tool in the turn. */
-export function unresolvedFailures(outcomes: readonly ToolOutcome[]): ToolOutcome[] {
+/**
+ * What counts as dealing with a failure:
+ * - `any-tool`: some later call in the turn succeeded. The agent saw the
+ *   failure and moved on (worked around it, tried another source). This is
+ *   the default, because general agents probe with calls that are expected to
+ *   fail (a missing file, a page not loaded yet) and carry on.
+ * - `same-tool`: a later call to the same tool succeeded. Stricter; suits
+ *   pipeline agents where each tool produces a result the answer reports.
+ */
+export type FailureResolution = 'any-tool' | 'same-tool'
+
+/** Failed calls the turn never got past (see {@link FailureResolution}). */
+export function unresolvedFailures(outcomes: readonly ToolOutcome[], resolvedBy: FailureResolution = 'any-tool'): ToolOutcome[] {
   const unresolved: ToolOutcome[] = []
   outcomes.forEach((outcome, i) => {
     if (!outcome.failed) return
-    const retried = outcomes.slice(i + 1).some(later => later.name === outcome.name && !later.failed)
-    if (!retried) unresolved.push(outcome)
+    const later = outcomes.slice(i + 1)
+    const resolved = resolvedBy === 'same-tool'
+      ? later.some(o => o.name === outcome.name && !o.failed)
+      : later.some(o => !o.failed)
+    if (!resolved) unresolved.push(outcome)
   })
   return unresolved
 }
+
+/**
+ * dsh error codes for calls that never produced a result the answer could
+ * misreport: the call was cancelled, the tool did not exist, its arguments were
+ * invalid, or a reviewer declined it. These are part of how the agent works,
+ * not failed results (`*` wildcards).
+ */
+export const DEFAULT_IGNORED_ERROR_CODES: readonly string[] = [
+  '*ABORTED*', '*CANCELLED', '*CANCELED', 'UNKNOWN_TOOL', 'INVALID_ARGS', 'TOOL_ACTIVATION_FAILED',
+  'AUTO_REVIEW_DENIED', 'DECLINED',
+]
 
 // Words that show the answer tells the user something did not work.
 const ACKNOWLEDGES = /\b(?:fail(?:s|ed|ing|ure|ures)?|error(?:s|ed)?|errored|unable|couldn['’]?t|could not|cannot|can['’]?t|did not (?:work|succeed|complete|return|run|finish)|didn['’]?t (?:work|succeed|complete|return|run|finish)|wasn['’]?t able|was not able|not available|unavailable|timed? ?out|crash(?:ed|es)?|exception|denied|blocked|refused)\b|失败|报错|出错|错误|未能|无法|没能|没有成功|未成功|不成功|超时|异常|拒绝|不可用|没有返回|未返回/i
