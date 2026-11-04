@@ -64,6 +64,9 @@ describe('acknowledgesFailure', () => {
       'The request timed out.',
       '数据下载失败，结果不完整。',
       '无法连接到集群。',
+      'get_run("r4") returns **404**, so r4 is left out.',
+      'The tracking server has no data for r4.',
+      'billing 的指标数据缺失。',
     ]) expect(acknowledgesFailure(text)).toBe(true)
   })
 

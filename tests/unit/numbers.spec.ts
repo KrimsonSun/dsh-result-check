@@ -148,6 +148,47 @@ describe('NumberIndex and isSourced: matching at the written precision', () => {
     expect(unsourcedClaims('| GPU | 4 | 96 GB |\n| total | | 384 GB |', new NumberIndex())).toEqual([])
   })
 
+  it('accepts column totals, means and shares of a table, also cited outside it (seen with DeepSeek)', () => {
+    const counts = indexOf('{"groups": [{"n_condition": 4210, "n_reference": 3987}, {"n_condition": 1532, "n_reference": 1764}]}')
+    const table = '| Cell type | WT | DDX41 |\n|---|---|---|\n| Rod | 3,987 | 4,210 |\n| Muller glia | 1,764 | 1,532 |\n| **Total** | **5,751** | **5,742** |'
+    expect(unsourcedClaims(table, counts)).toEqual([])
+    const services = indexOf('{"requests": 18234511} {"requests": 9876104} {"requests": 2345678}')
+    const report = '| 服务 | 请求数 |\n|---|---|\n| auth | 18,234,511 |\n| search | 9,876,104 |\n| billing | 数据缺失 |\n| payments | 2,345,678 |\n\n'
+      + '- 三个可用服务合计：30,456,293 次请求\n  - auth 占 59.9%，search 占 32.4%'
+    expect(unsourcedClaims(report, services)).toEqual([])
+    const survey = '| 选项 | 人数 | 占比 |\n|---|---|---|\n| 地铁 | 612 | 33.2% |\n| 公交 | 401 | 21.7% |\n| 其他 | 833 | 45.1% |\n\n选择地铁或公交的人合计 1013 人，地铁领先公交 11.5 个百分点。'
+    expect(unsourcedClaims(survey, indexOf('{"地铁": 612, "公交": 401, "其他": 833}'))).toEqual([])
+    const runs = '| run | best |\n|---|---|\n| r1 | 0.8712 |\n| r2 | 0.8834 |\n| r3 | 0.8521 |\n| r5 | 0.8907 |\n\nMean best accuracy: 0.87435.'
+    expect(unsourcedClaims(runs, indexOf('0.8712 0.8834 0.8521 0.8907'))).toEqual([])
+  })
+
+  it('checks working the answer writes out', () => {
+    expect(unsourcedClaims('WT: 3,987 + 1,764 + 258 + 2,655 = **8,664** cells', indexOf('3987 1764 258 2655'))).toEqual([])
+    expect(unsourcedClaims('Mean: (0.8712 + 0.8834 + 0.8521 + 0.8907) / 4 = 0.87435', indexOf('0.8712 0.8834 0.8521 0.8907'))).toEqual([])
+    expect(unsourcedClaims('| `/api/cart` | **1** | 1.3% (1/80) |', indexOf('cart 1 of 80'))).toEqual([])
+    // Wrong working is still flagged: 412,876,543,210 / 541,382,714,793 is 0.7626334.
+    expect(unsourcedClaims('Cross-check: 412,876,543,210 / 541,382,714,793 = 0.76264', indexOf('412876543210 541382714793')).map(c => c.raw))
+      .toEqual(['0.76264'])
+  })
+
+  it('accepts relative changes, complements and percentage points', () => {
+    expect(unsourcedClaims('p95 is 9.5% worse (97.1 vs 88.7 ms)', indexOf('97.1 88.7'))).toEqual([])
+    expect(unsourcedClaims('data takes 76.3% of the volume; the other five take 23.7%', indexOf('0.763'))).toEqual([])
+    expect(unsourcedClaims('difference +17.73 pp (95% CI +9.0 to +26.4 pp)', indexOf('17.73 0.0904 0.2643'))).toEqual([])
+  })
+
+  it('accepts a scale word over a table kept in thousands, and skips examples', () => {
+    expect(unsourcedClaims('Revenue: 18,324.1 (USD thousands) = $18.32M', indexOf('18324.1'))).toEqual([])
+    expect(unsourcedClaims('pick b if your p95 SLO is looser (e.g. 150 ms)', indexOf('88.7 97.1'))).toEqual([])
+  })
+
+  it('still flags made-up numbers in tables and in written-out working', () => {
+    const tool = '{"AC": {"DDX41": 392, "WT": 258}, "MG": {"DDX41": 1532, "WT": 1764}}'
+    const table = '| Cell type | WT | DDX41 |\n|---|---|---|\n| AC | 469 | 181 |\n| MG | 1,764 | 1,532 |\n| **Total** | **2,233** | **1,713** |'
+    expect(unsourcedClaims(table, indexOf(tool)).map(c => c.raw)).toEqual(['469', '181', '2,233', '1,713'])
+    expect(unsourcedClaims('WT 469 + DDX41 181 = 650 cells', indexOf(tool)).map(c => c.raw)).toEqual(['469', '181', '650'])
+  })
+
   it('can turn derivation off', () => {
     expect(unsourcedClaims('4×96 = 384GB', new NumberIndex(), { allowDerived: false }).map(c => c.raw)).toEqual(['384'])
   })

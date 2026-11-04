@@ -1,0 +1,18 @@
+# Eval overlay for a headless profile that loads dsh-result-check:
+# the eval's MCP data server (path set by run.mjs), and the model chosen by EVAL_MODEL.
+- insert:
+    - id: eval-mcp-data
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        transport: stdio
+        serverName: data
+        command: !!js process.execPath
+        args: !!js '[process.env.EVAL_MCP_SERVER]'
+        failOnStartupError: true
+        reconnect:
+          enabled: false
+
+- id: agent-default-model
+  config:
+    provider: !!js process.env.EVAL_PROVIDER ?? 'deepseek-official'
+    model: !!js process.env.EVAL_MODEL ?? 'deepseek-flash'

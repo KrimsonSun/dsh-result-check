@@ -1,0 +1,10 @@
+{
+  "name": "dsh-result-check-deepseek-eval",
+  "private": true,
+  "type": "module",
+  "description": "Runs the result-check plugin inside DeepSeek Harness on data-analysis tasks with a real DeepSeek model.",
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.2.0",
+    "zod": "4.4.3"
+  }
+}

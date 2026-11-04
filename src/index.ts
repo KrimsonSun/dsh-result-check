@@ -11,8 +11,9 @@
  *    it, and the answer does not say anything failed.
  * 2. Unsourced numbers — the answer states a number that no tool output, tool
  *    argument or user message of the session contains at the precision the
- *    answer writes it (allowing unit changes and one arithmetic step on other
- *    numbers in the answer).
+ *    answer writes it, allowing unit changes and what the answer's other
+ *    numbers give (one arithmetic step, a table total or share, written-out
+ *    working).
  *
  * No model call is made. The plugin steers at `agent/turn-stopping` (at most
  * `maxNudgesPerTurn` times per turn), so the model gets one more step to retry,
@@ -67,7 +68,7 @@ export interface Config {
   ignoreErrorCodes?: string[]
   /** A failure is dealt with once a later call succeeds: of any tool (default), or only of the same tool. */
   failureResolvedBy?: FailureResolution
-  /** Accept a number that one arithmetic step on two other numbers in the answer gives (default true). */
+  /** Accept a number the answer's other numbers give: one step, a table total or share, written-out working (default true). */
   allowDerived?: boolean
   /** Where those two numbers may come from: the same paragraph (default) or the whole answer (quieter, misses more). */
   derivedScope?: DerivedScope

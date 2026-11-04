@@ -1,3 +1,11 @@
 node_modules/
 lib/
 *.tgz
+.env
+eval/deepseek/tasks/
+eval/deepseek/mcp-data/
+eval/deepseek/runs*/
+eval/deepseek/review*/
+eval/deepseek/grades*/
+eval/deepseek/summary*.jsonl
+eval/deepseek/*.log

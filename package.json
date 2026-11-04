@@ -1,6 +1,6 @@
 {
   "name": "dsh-result-check",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeepSeek Harness plugin: before a turn ends, checks the answer against the session's tool output (unreported tool failures, numbers with no source) and sends the model back once.",
   "type": "module",
   "main": "lib/index.js",

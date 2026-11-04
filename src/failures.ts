@@ -111,7 +111,7 @@ export const DEFAULT_IGNORED_ERROR_CODES: readonly string[] = [
 ]
 
 // Words that show the answer tells the user something did not work.
-const ACKNOWLEDGES = /\b(?:fail(?:s|ed|ing|ure|ures)?|error(?:s|ed)?|errored|unable|couldn['’]?t|could not|cannot|can['’]?t|did not (?:work|succeed|complete|return|run|finish)|didn['’]?t (?:work|succeed|complete|return|run|finish)|wasn['’]?t able|was not able|not available|unavailable|timed? ?out|crash(?:ed|es)?|exception|denied|blocked|refused)\b|失败|报错|出错|错误|未能|无法|没能|没有成功|未成功|不成功|超时|异常|拒绝|不可用|没有返回|未返回/i
+const ACKNOWLEDGES = /\b(?:fail(?:s|ed|ing|ure|ures)?|error(?:s|ed)?|errored|unable|couldn['’]?t|could not|cannot|can['’]?t|did not (?:work|succeed|complete|return|run|finish)|didn['’]?t (?:work|succeed|complete|return|run|finish)|wasn['’]?t able|was not able|not available|unavailable|timed? ?out|crash(?:ed|es)?|exception|denied|blocked|refused|not found|no data|missing|(?:returned|returns|got|gave|status|HTTP|error)\W{0,4}[45]\d\d)\b|失败|报错|出错|错误|未能|无法|没能|没有成功|未成功|不成功|超时|异常|拒绝|不可用|没有返回|未返回|缺失|没有数据|无数据|未找到|找不到|不存在/i
 
 /** Does the answer say that something failed? Any such statement counts (precision first). */
 export function acknowledgesFailure(answer: string): boolean {

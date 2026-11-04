@@ -14,7 +14,11 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$DSH/packages/community/result-check"
 
 mkdir -p "$DEST"
-rsync -a --delete --exclude node_modules --exclude lib --exclude .git "$HERE/" "$DEST/"
+# Copy only what the tests need, so local files such as .env (an API key) never land in the
+# checkout; --delete-excluded also clears anything an earlier copy left there.
+rsync -a --delete --delete-excluded \
+  --include 'src/***' --include 'tests/***' --include package.json --include cordis.patch.yml \
+  --exclude '*' "$HERE/" "$DEST/"
 cat > "$DEST/tsconfig.json" <<'EOF'
 {
   "extends": "../../../tsconfig.base.json",

@@ -10,7 +10,8 @@
  * step. So the reader below skips code, paths, line references, versions,
  * dates, identifiers, section numbers, approximations, small integers and
  * round figures, and it accepts a number the session's numbers give after a
- * change of unit or one arithmetic step.
+ * change of unit, or that the answer's own numbers give: one arithmetic step,
+ * a table column's total or share, or working the answer writes out.
  */
 
 /** One number the answer states as a value. */
@@ -31,7 +32,7 @@ export interface NumberClaim {
 export interface ClaimOptions {
   /** Plain integers with fewer digits than this are not claims (default 3: 100 and up). */
   readonly minIntegerDigits: number
-  /** Accept a claim that one arithmetic step on two other numbers in the answer gives (default true). */
+  /** Accept a claim the answer's other numbers give: one step, a table total or share, written-out working (default true). */
   readonly allowDerived: boolean
   /** Where those two numbers may come from: the claim's paragraph (default) or anywhere in the answer. */
   readonly derivedScope: DerivedScope
@@ -107,10 +108,12 @@ export function claimableText(answer: string): string {
 // A unit of up to three letters after it is allowed ("1530ms", "3GB", "2x").
 const NUMBER = /(?<![A-Za-z0-9_.,\\])[-−+]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:[eE]([-+]?\d+))?(\s?[%％‰])?(?![.,]?\d)(?![A-Za-z]{4,})(?![A-Za-z]{1,3}[0-9_])/g
 
-// A word right before the number that says it is not an exact measured value.
-const HEDGE_BEFORE = /(?:~|≈|∼|<|>|≤|≥|\b(?:about|around|roughly|approximately|approx\.?|nearly|almost|over|under|more than|less than|fewer than|at least|at most|up to|above|below)|约|大约|大概|将近|接近|近|超过|不到|不足|至少|最多|多达|上千|上万)\s*$/i
-// ...or right after it.
-const HEDGE_AFTER = /^\s*(?:多|余|左右|上下|以上|以下|开外|\+|or so\b|or more\b|or less\b|-ish\b)/i
+// A word right before the number that says it is not an exact measured value,
+// or that it is an example ("e.g. 150 ms").
+const HEDGE_BEFORE = /(?:~|≈|∼|<|>|≤|≥|\b(?:about|around|roughly|approximately|approx\.?|nearly|almost|over|under|more than|less than|fewer than|at least|at most|up to|above|below|e\.g\.,?|eg\.|for example,?|for instance,?|such as)|约|大约|大概|将近|接近|近|超过|不到|不足|至少|最多|多达|上千|上万|例如|比如|譬如|假设|假如)\s*$/i
+// ...or right after it: "300+ users", "300左右", and "95% CI" (a confidence level).
+// A spaced "+" is addition ("469 + 181"), not a bound.
+const HEDGE_AFTER = /^(?:\s*(?:多|余|左右|上下|以上|以下|开外|or so\b|or more\b|or less\b|-ish\b|CI\b|confidence\b|置信)|\+(?!\s*\d))/i
 // A label that makes the number a reference, not a value: "Section 3.2", "step 12", "PR 150",
 // "lines 9319–9338", "HTTP 404", "ISO 15189". The second half of a range after the label counts too.
 const REFERENCE_BEFORE = /(?:\b(?:section|sec\.|step|figure|fig\.|table|chapter|appendix|line|lines|page|pp?\.|issue|pr|pull request|commit|version|ver\.|release|python|node|java|go|rust|ubuntu|macos|ios|android|cuda|port|pid|id|no\.|number|http|status|code|codes|errno|iso|isbn|rfc|rtx|gtx|(?:called|used|defined|declared|raised|set) at)|gb\/t|§|#|第)\s*(?:\d+\s*[-–]\s*)?$/i
@@ -120,6 +123,11 @@ const NAME_HYPHEN_BEFORE = /[A-Za-z][-–]$/
 const LINE_NUMBERING = /^\s*(?:#{1,6}\s*|[-*+]\s+)?$/
 // A unit the check can convert, right after the number.
 const UNIT_AFTER = /^\s?(KiB|MiB|GiB|TiB|PiB|KB|kB|MB|GB|TB|PB|bytes?|ms|secs?|seconds?|mins?|minutes?|hrs?|hours?|days?|[KkMBsh]|万|亿|千|小时|分钟|秒|天)(?![A-Za-z])/
+// Percentage points read like a percentage: "+26.4 pp" may be 0.264 in the tool output.
+// The first number of a range takes the range's unit: "+9.0 to +26.4 pp", "9.0–26.4%".
+const RANGE_REST = String.raw`(?:\s*(?:to|–|-|~|至|到)\s*[-−+]?\d+(?:\.\d+)?)?`
+const POINTS_AFTER = new RegExp(String.raw`^${RANGE_REST}\s?(?:pp\b|p\.p\.|percentage points?\b|个?百分点)`, 'i')
+const PERCENT_RANGE_AFTER = /^\s*(?:to|–|-|~|至|到)\s*[-−+]?\d+(?:\.\d+)?\s?[%％]/
 
 function isRound(value: number, percent: boolean, decimals: number): boolean {
   if (decimals > 0) return false
@@ -145,12 +153,11 @@ export function extractClaims(answer: string, options?: Partial<ClaimOptions>): 
     const intText = match[1]!
     const fraction = match[2] ?? ''
     const exponent = match[3] === undefined ? 0 : Number(match[3])
-    const percent = match[4] !== undefined
     const decimals = fraction.length
-
     const lineStart = text.lastIndexOf('\n', start - 1) + 1
     const before = text.slice(Math.max(lineStart, start - 24), start)
-    const after = text.slice(start + match[0].length, start + match[0].length + 12)
+    const after = text.slice(start + match[0].length, start + match[0].length + 24)
+    const percent = match[4] !== undefined || POINTS_AFTER.test(after) || PERCENT_RANGE_AFTER.test(after)
     if (LINE_NUMBERING.test(text.slice(lineStart, start)) && /^\d+\.(?:\s|\d)|^\d+\)\s/.test(text.slice(start))) continue
     if (HEDGE_BEFORE.test(before) || HEDGE_AFTER.test(after)) continue
     if (REFERENCE_BEFORE.test(before) || NAME_HYPHEN_BEFORE.test(before)) continue
@@ -270,21 +277,26 @@ export function unitFactors(unit: string | undefined): number[] {
   const seconds = SECONDS[unit]
   if (seconds !== undefined) for (const step of TIME_STEPS) if (step !== seconds) out.push(seconds / step)
   if (unit === 'K' || unit === 'k' || unit === '千') out.push(1e3, 1024)
-  if (unit === 'M') out.push(1e6, 1024 ** 2)
-  if (unit === 'B') out.push(1e9) // 284B parameters
+  // A scale word may also restate a table kept in thousands (or millions):
+  // $18.32M from 18,324.1 (USD thousands).
+  if (unit === 'M') out.push(1e6, 1024 ** 2, 1e3)
+  if (unit === 'B') out.push(1e9, 1e6, 1e3) // 284B parameters
   if (unit === '万') out.push(1e4)
-  if (unit === '亿') out.push(1e8)
+  if (unit === '亿') out.push(1e8, 1e4)
   return out
 }
 
-/** Is `claim` what some number in `index` reads as at the claim's precision (percent ↔ fraction allowed)? */
-function coversClaim(claim: NumberClaim, index: NumberIndex, factor = 1): boolean {
+/**
+ * Is `claim` what some number in `index` reads as at the claim's precision?
+ * 12.5% may be 0.125 in `index`; with `reverse`, 0.125 may also be 12.5% there
+ * (for tool output, not for values the check computed itself).
+ */
+function coversClaim(claim: NumberClaim, index: NumberIndex, factor = 1, reverse = true): boolean {
   const value = claim.value * factor
   const halfWidth = claim.halfWidth * factor
   if (index.covers(value, halfWidth)) return true
-  // 12.5% may be 0.125 in the tool output; 0.125 may be 12.5% there.
   if (claim.percent && index.covers(value / 100, halfWidth / 100)) return true
-  if (!claim.percent && factor === 1 && value <= 1 && index.covers(value * 100, halfWidth * 100)) return true
+  if (reverse && !claim.percent && factor === 1 && value <= 1 && index.covers(value * 100, halfWidth * 100)) return true
   return false
 }
 
@@ -294,7 +306,7 @@ export function isSourced(claim: NumberClaim, index: NumberIndex): boolean {
   return unitFactors(claim.unit).some(f => coversClaim(claim, index, f))
 }
 
-// --- one arithmetic step on the answer's own numbers ----------------------------------------------
+// --- what the answer's own numbers give ------------------------------------------------------------
 
 // Every number in the claimable text, small ones included ("4 × 96 = 384").
 const ANSWER_NUMBER = /(?<![A-Za-z0-9_.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![A-Za-z0-9_.,])\d+(?:\.\d+)?/g
@@ -331,29 +343,196 @@ function regionAround(text: string, at: number, scope: DerivedScope): string {
 }
 
 /**
- * Results of one step (a + b, a − b, a × b, a ÷ b) on two of `operands`.
- * Steps that only restate a number are left out: × or ÷ by 0, 1 or a power of
- * ten, and ± a number under 1% of the other (469 = 470 − 1 proves nothing).
+ * Values the check computed from the answer's own numbers. `relative` holds
+ * relative changes, which only a percentage claim is compared with ("9.5%
+ * worse"): read as plain numbers they match far too much by chance.
  */
-export function derivedValues(operands: readonly number[]): NumberIndex {
-  const ops = operands.slice(0, MAX_OPERANDS)
-  const out: number[] = []
-  for (let i = 0; i < ops.length; i++) {
-    for (let j = i + 1; j < ops.length; j++) {
-      const a = Math.max(ops[i]!, ops[j]!)
-      const b = Math.min(ops[i]!, ops[j]!)
-      if (b >= 0.01 * a) out.push(a + b, a - b)
-      if (b !== 0 && !isPowerOfTen(a) && !isPowerOfTen(b)) out.push(a * b, a / b, b / a)
-    }
-  }
-  const index = new NumberIndex()
-  index.addValues(out)
-  return index
+export interface Derived {
+  readonly plain: NumberIndex
+  readonly relative: NumberIndex
+}
+
+function derived(plain: number[], relative: number[]): Derived {
+  const p = new NumberIndex()
+  p.addValues(plain)
+  const r = new NumberIndex()
+  r.addValues(relative)
+  return { plain: p, relative: r }
 }
 
 /**
- * Drop the claims one arithmetic step gives from other numbers near them in
- * the answer (see {@link DerivedScope}).
+ * Results of one step on two of `operands`: a + b, a − b, a × b, a ÷ b, and,
+ * for two numbers less than a factor 2 apart, the relative change (a − b) ÷ b
+ * ("9.5% worse": 97.1 vs 88.7). Also the complement of one operand, 100 − p or
+ * 1 − f ("the other five take 23.7%" next to 76.3%).
+ * Steps that only restate a number are left out: × or ÷ by 0, 1 or a power of
+ * ten, and ± a number under 1% of the other (469 = 470 − 1 proves nothing).
+ */
+export function derivedValues(operands: readonly number[]): Derived {
+  const plain: number[] = []
+  const relative: number[] = []
+  stepValues(operands.slice(0, MAX_OPERANDS), plain, relative)
+  return derived(plain, relative)
+}
+
+function stepValues(ops: readonly number[], plain: number[], relative: number[]): void {
+  for (let i = 0; i < ops.length; i++) {
+    const p = ops[i]!
+    if (p > 0 && p < 100 && !Number.isInteger(p)) plain.push(100 - p)
+    if (p > 0 && p < 1) plain.push(1 - p)
+    for (let j = i + 1; j < ops.length; j++) {
+      const a = Math.max(p, ops[j]!)
+      const b = Math.min(p, ops[j]!)
+      if (b >= 0.01 * a) plain.push(a + b, a - b)
+      if (b === 0 || isPowerOfTen(a) || isPowerOfTen(b)) continue
+      plain.push(a * b, a / b, b / a)
+      if (a <= 2 * b) relative.push((a - b) / b, (a - b) / a)
+    }
+  }
+}
+
+// --- tables: column totals, means, shares and differences -----------------------------------------
+
+// A row whose label says it aggregates the others is checked, not used as an operand.
+const AGGREGATE_ROW = /\b(?:total|totals|sum|overall|all|mean|average|avg)\b|合计|总计|总数|总和|小计|共计|平均|均值/i
+const TABLE_SEPARATOR = /^\|?(?:\s*:?-{2,}:?\s*\|)+\s*:?-*:?\s*\|?$/
+const MAX_COLUMN = 30
+
+/** The numeric cells of each column of each markdown table in `text` (header and aggregate rows left out). */
+function tableColumns(text: string): number[][] {
+  const columns: number[][] = []
+  let rows: string[][] = []
+  let header = false
+  const flush = (): void => {
+    const body = header ? rows.slice(1) : rows
+    const width = Math.max(0, ...body.map(r => r.length))
+    for (let c = 0; c < width; c++) {
+      const column: number[] = []
+      for (const row of body) {
+        if (AGGREGATE_ROW.test(row[0] ?? '')) continue
+        const first = /(?<![A-Za-z0-9_.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![A-Za-z0-9_.,])\d+(?:\.\d+)?/.exec(row[c] ?? '')
+        if (first !== null) column.push(Number(first[0].replaceAll(',', '')))
+      }
+      if (column.length >= 2) columns.push(column.slice(0, MAX_COLUMN))
+    }
+    rows = []
+    header = false
+  }
+  for (const line of text.split('\n')) {
+    const t = line.trim()
+    if (!t.startsWith('|')) {
+      if (rows.length > 0) flush()
+      continue
+    }
+    if (TABLE_SEPARATOR.test(t)) {
+      if (rows.length === 1) header = true
+      continue
+    }
+    rows.push(t.replace(/^\||\|$/g, '').split('|').map(cell => cell.trim()))
+  }
+  if (rows.length > 0) flush()
+  return columns
+}
+
+/**
+ * What a reader may compute from one table column anywhere in the answer:
+ * its total and mean, each cell's share of the total, and one step on two of
+ * its cells ("three services together: 30,456,293"; "地铁或公交合计 1013 人").
+ */
+function tableValues(text: string, blocked: ReadonlySet<number>): Derived {
+  const plain: number[] = []
+  const relative: number[] = []
+  for (const raw of tableColumns(text)) {
+    const column = raw.filter(n => !blocked.has(n))
+    if (column.length < 2) continue
+    const total = column.reduce((s, n) => s + n, 0)
+    plain.push(total, total / column.length)
+    if (total !== 0) for (const n of column) plain.push(n / total)
+    stepValues(column, plain, relative)
+  }
+  return derived(plain, relative)
+}
+
+// --- working the answer shows: "3,987 + 1,764 + 258 + 2,655 = 8,664", "1.3% (1/80)" ---------------
+
+const WORKING_CHARS = String.raw`[\d.,%$\s+\-−×*/÷()]`
+const WORKING_BEFORE = new RegExp(String.raw`(${WORKING_CHARS}+)[=≈]\s*$`)
+const WORKING_AFTER = new RegExp(String.raw`^\s*\(\s*=?\s*(${WORKING_CHARS}+?)\)(?!\s*[\d+\-−×*/÷])`)
+const WORKING_TOKEN = /\s*(?:(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)%?|([+\-−×*/÷()])|\$)/y
+
+/** Value of an arithmetic expression with at least one operator, or undefined. Blocked operands spoil it. */
+function evaluate(expr: string, blocked: ReadonlySet<number>): number | undefined {
+  const tokens: (number | string)[] = []
+  WORKING_TOKEN.lastIndex = 0
+  const source = expr.trim()
+  while (WORKING_TOKEN.lastIndex < source.length) {
+    const m = WORKING_TOKEN.exec(source)
+    if (m === null) return undefined
+    if (m[1] !== undefined) {
+      const n = Number(m[1].replaceAll(',', ''))
+      if (blocked.has(n)) return undefined
+      tokens.push(n)
+    } else if (m[2] !== undefined) tokens.push(m[2].replace('−', '-').replace('×', '*').replace('÷', '/'))
+  }
+  let i = 0
+  let operators = 0
+  const factor = (): number | undefined => {
+    const t = tokens[i++]
+    if (typeof t === 'number') return t
+    if (t === '-') { const v = factor(); return v === undefined ? undefined : -v }
+    if (t === '(') {
+      const v = sum()
+      return tokens[i++] === ')' ? v : undefined
+    }
+    return undefined
+  }
+  const product = (): number | undefined => {
+    let v = factor()
+    while (v !== undefined && (tokens[i] === '*' || tokens[i] === '/')) {
+      const op = tokens[i++]
+      const w = factor()
+      if (w === undefined) return undefined
+      operators++
+      v = op === '*' ? v * w : v / w
+    }
+    return v
+  }
+  const sum = (): number | undefined => {
+    let v = product()
+    while (v !== undefined && (tokens[i] === '+' || tokens[i] === '-')) {
+      const op = tokens[i++]
+      const w = product()
+      if (w === undefined) return undefined
+      operators++
+      v = op === '+' ? v + w : v - w
+    }
+    return v
+  }
+  const value = sum()
+  return value !== undefined && i === tokens.length && operators > 0 && Number.isFinite(value) ? Math.abs(value) : undefined
+}
+
+/** Values of the working written right before (`… = claim`) or right after (`claim (a/b)`) the claim on its line. */
+function shownWorking(text: string, claim: NumberClaim, blocked: ReadonlySet<number>): number[] {
+  if (claim.at === undefined) return []
+  const lineStart = text.lastIndexOf('\n', claim.at - 1) + 1
+  const lineEnd = text.indexOf('\n', claim.at)
+  const strip = (s: string): string => s.replace(/\*\*|__|`/g, '')
+  const before = strip(text.slice(lineStart, claim.at))
+  const after = strip(text.slice(claim.at + claim.raw.length, lineEnd === -1 ? text.length : lineEnd))
+  const out: number[] = []
+  for (const m of [WORKING_BEFORE.exec(before), WORKING_AFTER.exec(after)]) {
+    const v = m === null ? undefined : evaluate(m[1]!, blocked)
+    if (v !== undefined) out.push(v)
+  }
+  return out
+}
+
+/**
+ * Drop the claims the answer's other numbers account for: one arithmetic step
+ * on two numbers near the claim (see {@link DerivedScope}), a total, mean,
+ * share or one step within a table column anywhere in the answer, or working
+ * the answer writes out next to the claim (`a + b + c = claim`).
  * Only numbers that are not themselves unsourced claims may be operands, so
  * made-up numbers cannot vouch for each other (469, 181 and their sum 650).
  * A claim cleared this way becomes an operand for the next round.
@@ -364,17 +543,26 @@ function dropDerived(answer: string, unsourced: NumberClaim[], scope: DerivedSco
   let remaining = unsourced
   for (let round = 0; round < MAX_ROUNDS && remaining.length > 0; round++) {
     const blocked = new Set(remaining.map(c => c.value))
-    const byRegion = new Map<string, NumberIndex>()
+    const byRegion = new Map<string, Derived>()
+    const tables = tableValues(text, blocked)
+    // 8 × 605 s = 80.7 min: the step's result may be in another unit.
+    const covered = (claim: NumberClaim, d: Derived): boolean =>
+      coversClaim(claim, d.plain, 1, false)
+      || unitFactors(claim.unit).some(f => coversClaim(claim, d.plain, f, false))
+      || (claim.percent && coversClaim(claim, d.relative, 1, false))
     const next = remaining.filter((claim) => {
       if (claim.at === undefined) return true
+      // Working written next to the claim decides: right working clears it, wrong
+      // working keeps it even when some other combination happens to match.
+      const working = shownWorking(text, claim, blocked)
+      if (working.length > 0) return !covered(claim, derived(working, []))
       const region = regionAround(text, claim.at, scope)
-      let derived = byRegion.get(region)
-      if (derived === undefined) {
-        derived = derivedValues(numbersIn(region).filter(n => !blocked.has(n)))
-        byRegion.set(region, derived)
+      let near = byRegion.get(region)
+      if (near === undefined) {
+        near = derivedValues(numbersIn(region).filter(n => !blocked.has(n)))
+        byRegion.set(region, near)
       }
-      // 8 × 605 s = 80.7 min: the step's result may be in another unit.
-      return !(coversClaim(claim, derived) || unitFactors(claim.unit).some(f => coversClaim(claim, derived, f)))
+      return !(covered(claim, near) || covered(claim, tables))
     })
     if (next.length === remaining.length) break
     remaining = next
